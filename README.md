@@ -507,6 +507,58 @@ metaclaw config memory.sidecar_url http://127.0.0.1:30001
 
 ---
 
+## 🦞 OpenClaw Multi-Agent Enhancements
+
+This fork includes enhancements for better [OpenClaw](https://github.com/openclaw/openclaw) multi-agent support. These changes are fully backward-compatible — single-agent setups work exactly as before.
+
+### Per-Agent Skill Isolation
+
+In multi-agent deployments, each agent now gets its own skill directory. Skills evolved from one agent's conversations no longer pollute another agent's prompt injections.
+
+```
+~/.metaclaw/skills/
+├── _shared/              # Shared skills across all agents (manually curated)
+├── research-agent/       # Auto-evolved skills for research-agent
+└── assistant-agent/      # Auto-evolved skills for assistant-agent
+```
+
+The OpenClaw plugin propagates `X-Agent-Id` alongside existing headers. MetaClaw creates and caches a per-agent `SkillManager` that loads from `_shared/` + `{agent_id}/`.
+
+### Per-Agent Mode Routing
+
+Different agents can independently use `skills_only` or `rl` mode within a single MetaClaw instance:
+
+```yaml
+# ~/.metaclaw/config.yaml
+agents:
+  research-agent:
+    mode: rl              # RL training for research tasks
+  assistant-agent:
+    mode: skills_only     # Lightweight skill injection only
+```
+
+Agents not listed in the `agents` config fall back to the global `mode` setting.
+
+### Per-Agent LoRA Training (RL mode)
+
+When multiple agents use RL mode, each should train a separate LoRA checkpoint to avoid mixing trajectories from incompatible task distributions:
+
+```yaml
+agents:
+  research-agent:
+    mode: rl
+    lora_output: ~/.metaclaw/lora/research-agent/
+  code-agent:
+    mode: rl
+    lora_output: ~/.metaclaw/lora/code-agent/
+```
+
+### SkillEvolver Model Fallback
+
+The default `evolver_model` (`gpt-5.2`) may not be available on all OpenAI-compatible providers. If your provider doesn't support it, set `rl.evolver_model` in `config.yaml` to a supported model. See [#48](https://github.com/aiming-lab/MetaClaw/issues/48) for details.
+
+---
+
 ## 📚 Citation
 
 ```bibtex
