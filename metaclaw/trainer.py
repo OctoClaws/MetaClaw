@@ -23,10 +23,11 @@ import os
 from typing import Optional
 
 from .config import MetaClawConfig
-from .data_formatter import ConversationSample, batch_to_datums, compute_advantages
+from .data_formatter import ConversationSample, batch_to_datums, compute_advantages, set_sdk
 from .openclaw_env_rollout import rollout_loop
 from .prm_scorer import PRMScorer
 from .rollout import AsyncRolloutWorker, _drain_output_queue
+from .sdk_backend import resolve_sdk_backend
 from .skill_evolver import SkillEvolver
 from .skill_manager import SkillManager
 
@@ -99,11 +100,15 @@ class MetaClawTrainer:
     # ------------------------------------------------------------------ #
 
     async def setup(self):
-        """Initialise Tinker clients, SkillManager, PRMScorer, and rollout worker."""
+        """Initialise training clients, SkillManager, PRMScorer, and rollout worker."""
         from .log_color import setup_logging
         setup_logging()
 
-        import tinker
+        # Resolve SDK backend (tinker / mint / remote)
+        self._backend = resolve_sdk_backend(self.config)
+        sdk = self._backend.module
+        set_sdk(sdk)  # register with data_formatter
+        logger.info("[Trainer] SDK backend: %s", self._backend.label)
 
         # Optional Weights & Biases logging.
         # Enable by setting WANDB_DISABLED to anything except "true"/"1"/"yes"/"on".
@@ -128,11 +133,24 @@ class MetaClawTrainer:
             except Exception as e:
                 logger.warning("[Trainer] wandb init failed; continuing without wandb: %s", e)
 
-        # 1. Tinker service + LoRA training client
-        logger.info("[Trainer] connecting to Tinker service …")
-        service_client = tinker.ServiceClient()
+        # 1. Training service client (Tinker / MinT / Remote)
+        logger.info("[Trainer] connecting to %s service …", self._backend.label)
+        if self._backend.key == "remote":
+            service_client = sdk.ServiceClient(
+                base_url=self.config.remote_url,
+                api_key=self.config.remote_api_key,
+                timeout=self.config.remote_timeout_s,
+            )
+        else:
+            service_client = sdk.ServiceClient()
+        # For remote backend, use remote_model_path if set (the path on the GPU server),
+        # otherwise fall back to model_name. model_name is used locally for tokenizer.
+        if self._backend.key == "remote" and self.config.remote_model_path:
+            train_model = self.config.remote_model_path
+        else:
+            train_model = self.config.model_name
         self.training_client = await service_client.create_lora_training_client_async(
-            base_model=self.config.model_name,
+            base_model=train_model,
             rank=self.config.lora_rank,
         )
         if self.config.resume_from_ckpt:
@@ -233,6 +251,8 @@ class MetaClawTrainer:
             skill_evolver=self.skill_evolver,
             last_request_tracker=self._last_request_tracker,
         )
+        # Pass SDK module to rollout worker's API server
+        self.rollout_worker.set_sdk(sdk)
         logger.info("[Trainer] rollout worker configured on %s:%d",
                     self.config.proxy_host, self.config.proxy_port)
 
@@ -246,7 +266,7 @@ class MetaClawTrainer:
 
     async def _train_on_batch(self, batch: list[ConversationSample], step_idx: int):
         """Run one GRPO-style RL update on *batch*."""
-        import tinker
+        sdk = self._backend.module
 
         # Compute advantages (centre-normalise within batch)
         advantages = compute_advantages(batch)
@@ -266,7 +286,7 @@ class MetaClawTrainer:
 
         logger.info("[Trainer] optim_step_async starting …")
         await self.training_client.optim_step_async(
-            tinker.AdamParams(learning_rate=self.config.learning_rate)
+            sdk.AdamParams(learning_rate=self.config.learning_rate)
         )
         logger.info("[Trainer] optim_step_async done")
 

@@ -34,8 +34,12 @@ _DEFAULTS: dict = {
     },
     "rl": {
         "enabled": False,
+        "backend": "auto",
         "model": "",
         "tinker_api_key": "",
+        "remote_url": "",
+        "remote_api_key": "",
+        "remote_timeout_s": 600,
         "prm_url": "https://api.openai.com/v1",
         "prm_model": "gpt-5.2",
         "prm_api_key": "",
@@ -236,6 +240,11 @@ class ConfigStore:
             skill_evolution_every_n_turns=int(skills.get("evolution_every_n_turns", 10)),
             skill_evolution_history_path=str(Path(skills_dir) / "evolution_history.jsonl"),
             # RL training
+            backend=str(rl.get("backend", "auto")),
+            remote_url=str(rl.get("remote_url", "") or ""),
+            remote_api_key=str(rl.get("remote_api_key", "") or ""),
+            remote_timeout_s=float(rl.get("remote_timeout_s", 600)),
+            remote_model_path=str(rl.get("remote_model_path", "") or ""),
             model_name=rl.get("model") or llm.get("model_id") or "Qwen/Qwen3-4B",
             lora_rank=int(rl.get("lora_rank", 32)),
             batch_size=int(rl.get("batch_size", 4)),
@@ -319,11 +328,16 @@ class ConfigStore:
         ]
         if rl.get("enabled"):
             lines += [
+                f"rl.backend:      {rl.get('backend', 'auto')}",
                 f"rl.model:        {rl.get('model', '?')}",
                 f"rl.prm_url:      {rl.get('prm_url', '?')}",
                 f"rl.evolver_model:{rl.get('evolver_model', '?')}",
                 f"rl.resume_ckpt:  {rl.get('resume_from_ckpt', '')}",
             ]
+            if rl.get("backend") == "remote":
+                lines += [
+                    f"rl.remote_url:   {rl.get('remote_url', '?')}",
+                ]
         lines += [
             f"memory.enabled:  {memory.get('enabled', False)}",
             f"memory.dir:      {memory.get('dir', '?')}",

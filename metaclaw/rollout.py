@@ -109,8 +109,12 @@ class AsyncRolloutWorker:
             self._submission_enabled.set()
             print("[RolloutWorker] submission resumed")
 
+    def set_sdk(self, sdk_module):
+        """Register the SDK backend module on the API server."""
+        self._server.set_sdk(sdk_module)
+
     def update_sampling_client(self, client):
-        """Hot-swap the Tinker sampling client after a weight update."""
+        """Hot-swap the sampling client after a weight update."""
         self._server.update_sampling_client(client)
 
     def get_completed_groups(self) -> list[tuple]:

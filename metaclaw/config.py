@@ -168,6 +168,16 @@ class MetaClawConfig:
     skill_evolution_history_path: str = "memory_data/skills/evolution_history.jsonl"
 
     # ------------------------------------------------------------------ #
+    # Remote Training Backend                                             #
+    # ------------------------------------------------------------------ #
+    # Backend selection: "auto" | "tinker" | "mint" | "remote"
+    backend: str = "auto"
+    remote_url: str = ""               # e.g. "http://gpu-server:8000"
+    remote_api_key: str = ""           # Bearer token for remote server
+    remote_timeout_s: float = 600.0    # per-request timeout (seconds)
+    remote_model_path: str = ""        # model path on remote server (if different from model_name)
+
+    # ------------------------------------------------------------------ #
     # Per-Agent Isolation                                                 #
     # ------------------------------------------------------------------ #
     # Map agent_id → per-agent overrides. Keys: mode, skills_dir, lora_output.

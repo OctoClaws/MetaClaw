@@ -385,8 +385,12 @@ class MetaClawLauncher:
              f"metaclaw/{model_id}"],
             ["openclaw", "config", "set", "agents.defaults.sandbox.mode", "off"],
         ]
-        # Skip gateway restart if npx install already restarted it.
-        if not weixin_just_installed:
+        # Skip gateway restart if:
+        # - npx install already restarted it, OR
+        # - remote backend (MetaClaw runs as standalone process;
+        #   gateway restart would kill us via signal propagation)
+        skip_restart = weixin_just_installed or getattr(cfg, "backend", "auto") == "remote"
+        if not skip_restart:
             commands.append(["openclaw", "gateway", "restart"])
 
         for cmd in commands:
