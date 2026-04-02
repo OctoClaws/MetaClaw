@@ -59,6 +59,7 @@ metaclaw start --mode skills_only  # skills only, no RL (no Tinker needed)
 ## 🔥 News
 
 - **[04/02/2026]** **Remote GPU Training**: RL training now supports self-hosted GPU servers as an alternative to Tinker/MinT/Weaver cloud. Train on your own hardware for data security and cost control. Configure with `rl.backend: remote`. See [Remote GPU Training](#-remote-gpu-training).
+- **[04/01/2026]** **OpenClaw Multi-Agent Enhancements**: Per-agent skill isolation, per-agent mode routing (`skills_only` / `rl`), and per-agent LoRA training. Each agent gets its own skill directory and can independently use different operating modes within a single MetaClaw instance. See [OpenClaw Multi-Agent Enhancements](#-openclaw-multi-agent-enhancements).
 - **[03/25/2026]** **v0.4.0** — Contexture layer: MetaClaw now persists cross-session memory for users and projects. Relevant facts, preferences, and project history are automatically retrieved and injected into prompts. Includes adaptive memory policy, background consolidation, and an optional memory sidecar service.
 - **[03/24/2026]** **v0.3.3** — One-click OpenClaw plugin: MetaClaw now ships as a native OpenClaw extension — drop the folder into OpenClaw's extensions, run one command, and everything is set up automatically.
 - **[03/18/2026]** Our technical report "[MetaClaw: Just Talk -- An Agent That Meta-Learns and Evolves in the Wild](https://arxiv.org/pdf/2603.17187)" is out! **🏆 Ranked No. 1** on [HuggingFace Daily Papers](https://huggingface.co/papers/2603.17187)! Check it out!
