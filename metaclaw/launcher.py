@@ -356,6 +356,14 @@ class MetaClawLauncher:
 
     def _configure_openclaw(self, cfg):
         """Auto-configure OpenClaw to use the MetaClaw proxy."""
+        # Remote backend: skip auto-configuration entirely.
+        # The user has already configured OpenClaw's metaclaw provider
+        # with the correct model capabilities (reasoning, context window, etc).
+        # Overwriting it here would downgrade the config.
+        if getattr(cfg, "backend", "auto") == "remote":
+            logger.info("[Launcher] remote backend — skipping OpenClaw auto-configuration")
+            return
+
         model_id = cfg.llm_model_id or cfg.served_model_name or "metaclaw-model"
         provider_json = json.dumps({
             "api": "openai-completions",
