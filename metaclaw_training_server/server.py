@@ -132,7 +132,17 @@ def _truncate_messages(
         return messages
 
     # Estimate total tokens
-    total_text = "".join(m.get("content", "") or "" for m in messages)
+    def _extract_text(content):
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                item.get("text", "") for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+        return str(content) if content else ""
+
+    total_text = "".join(_extract_text(m.get("content")) for m in messages)
     estimated_tokens = len(tokenizer.encode(total_text, add_special_tokens=False))
 
     if estimated_tokens <= max_tokens:
@@ -147,13 +157,12 @@ def _truncate_messages(
     # Truncate system prompt to ~1000 chars max
     for msg in messages:
         if msg.get("role") == "system":
-            content = msg.get("content", "") or ""
+            content = _extract_text(msg.get("content"))
             if len(content) > 1000:
-                # Keep first 500 + last 500 chars
                 content = content[:500] + "\n...(truncated)...\n" + content[-500:]
             result.append({"role": "system", "content": content})
         else:
-            result.append(msg)
+            result.append(dict(msg))
 
     # If still too long, keep only last few turns
     if len(result) > 5:
