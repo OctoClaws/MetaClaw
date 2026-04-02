@@ -58,6 +58,7 @@ metaclaw start --mode skills_only  # skills only, no RL (no Tinker needed)
 
 ## 🔥 News
 
+- **[04/02/2026]** **Remote GPU Training**: RL training now supports self-hosted GPU servers as an alternative to Tinker/MinT/Weaver cloud. Train on your own hardware for data security and cost control. Configure with `rl.backend: remote`. See [Remote GPU Training](#-remote-gpu-training).
 - **[03/25/2026]** **v0.4.0** — Contexture layer: MetaClaw now persists cross-session memory for users and projects. Relevant facts, preferences, and project history are automatically retrieved and injected into prompts. Includes adaptive memory policy, background consolidation, and an optional memory sidecar service.
 - **[03/24/2026]** **v0.3.3** — One-click OpenClaw plugin: MetaClaw now ships as a native OpenClaw extension — drop the folder into OpenClaw's extensions, run one command, and everything is set up automatically.
 - **[03/18/2026]** Our technical report "[MetaClaw: Just Talk -- An Agent That Meta-Learns and Evolves in the Wild](https://arxiv.org/pdf/2603.17187)" is out! **🏆 Ranked No. 1** on [HuggingFace Daily Papers](https://huggingface.co/papers/2603.17187)! Check it out!
@@ -427,6 +428,82 @@ metaclaw config opd.kl_penalty_coef 1.0
 ```
 
 The teacher must be served behind an OpenAI-compatible `/v1/completions` endpoint (e.g., vLLM, SGLang). OPD can be combined with PRM scoring, both run asynchronously. See `examples/run_conversation_opd.py` and `scripts/run_openclaw_tinker_opd.sh`.
+
+---
+
+## 🖥️ Remote GPU Training
+
+**`rl.backend: remote`**
+
+Train on your own GPU servers instead of cloud backends. All training data and model weights stay on your infrastructure — ideal for data security and cost control.
+
+### Architecture
+
+```
+MetaClaw (local)  ── HTTP ──►  Training Server (your GPU server)
+   rl.backend: remote            ├── Training: PEFT/LoRA
+                                 ├── Inference: vLLM or HuggingFace
+                                 └── Checkpoints: local filesystem
+```
+
+### 1. Deploy the Training Server
+
+On your GPU server:
+
+```bash
+git clone https://github.com/OctoClaws/MetaClaw.git
+cd MetaClaw
+
+pip install -r metaclaw_training_server/requirements.txt
+
+# Start the server
+export METACLAW_API_KEY="your-secret-key"
+bash scripts/start_training_server.sh --port 8000
+```
+
+### 2. Configure MetaClaw
+
+```yaml
+# ~/.metaclaw/config.yaml
+mode: rl
+
+rl:
+  enabled: true
+  backend: remote
+  remote_url: http://your-gpu-server:8000
+  remote_api_key: your-secret-key
+  remote_model_path: /path/to/model/on/server   # model path on GPU server
+  model: Qwen/Qwen3-8B                          # HuggingFace ID (for local tokenizer)
+  lora_rank: 16
+  batch_size: 4
+```
+
+### 3. Start
+
+```bash
+metaclaw start --mode rl
+```
+
+### Features
+
+- **Drop-in backend**: switch between Tinker/MinT/Weaver/Remote with one config change
+- **Data security**: training data and weights never leave your servers
+- **PEFT/LoRA training**: importance sampling (GRPO), PPO, and CISPO loss functions
+- **vLLM inference**: with dynamic LoRA adapter hot-swap (no restart needed)
+- **Checkpoint management**: save/load full training state
+- **OpenAI-compatible API**: remote server exposes `/v1/chat/completions` — no local tokenizer needed
+
+### Backend Comparison
+
+| Feature | Tinker/MinT/Weaver | Remote |
+|---------|-------------------|--------|
+| Setup | API key only | Deploy server on GPU |
+| Data location | Cloud | Your server |
+| GPU cost | Pay-per-use | Your hardware |
+| Supported models | Backend catalog | Any HuggingFace model |
+| Network | Internet required | LAN / SSH tunnel |
+
+For full documentation, see [`docs/remote-training.md`](docs/remote-training.md).
 
 ---
 
