@@ -175,6 +175,7 @@ class MetaClawConfig:
     remote_url: str = ""               # e.g. "http://gpu-server:8000"
     remote_api_key: str = ""           # Bearer token for remote server
     remote_timeout_s: float = 600.0    # per-request timeout (seconds)
+    remote_model_path: str = ""        # model path on remote server (if different from model_name)
 
     # ------------------------------------------------------------------ #
     # Per-Agent Isolation                                                 #

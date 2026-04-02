@@ -244,6 +244,7 @@ class ConfigStore:
             remote_url=str(rl.get("remote_url", "") or ""),
             remote_api_key=str(rl.get("remote_api_key", "") or ""),
             remote_timeout_s=float(rl.get("remote_timeout_s", 600)),
+            remote_model_path=str(rl.get("remote_model_path", "") or ""),
             model_name=rl.get("model") or llm.get("model_id") or "Qwen/Qwen3-4B",
             lora_rank=int(rl.get("lora_rank", 32)),
             batch_size=int(rl.get("batch_size", 4)),

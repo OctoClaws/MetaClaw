@@ -143,8 +143,14 @@ class MetaClawTrainer:
             )
         else:
             service_client = sdk.ServiceClient()
+        # For remote backend, use remote_model_path if set (the path on the GPU server),
+        # otherwise fall back to model_name. model_name is used locally for tokenizer.
+        if self._backend.key == "remote" and self.config.remote_model_path:
+            train_model = self.config.remote_model_path
+        else:
+            train_model = self.config.model_name
         self.training_client = await service_client.create_lora_training_client_async(
-            base_model=self.config.model_name,
+            base_model=train_model,
             rank=self.config.lora_rank,
         )
         if self.config.resume_from_ckpt:

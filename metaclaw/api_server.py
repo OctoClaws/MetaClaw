@@ -1264,6 +1264,10 @@ class MetaClawAPIServer:
 
         if _effective_mode == "skills_only":
             output = await self._forward_to_llm(forward_body)
+        elif getattr(self.config, "backend", "auto") == "remote":
+            # Remote backend: forward as OpenAI-compatible chat completion
+            # (remote server handles tokenization internally)
+            output = await self._forward_to_remote(forward_body)
         else:
             output = await self._forward_to_tinker(forward_body)
 
@@ -1660,6 +1664,74 @@ class MetaClawAPIServer:
         except Exception as e:
             logger.error("[OpenClaw] LLM forward failed: %s", e, exc_info=True)
             raise HTTPException(status_code=502, detail=f"LLM forward error: {e}") from e
+
+    # ------------------------------------------------------------------ #
+    # Remote backend forwarding                                           #
+    # ------------------------------------------------------------------ #
+
+    async def _forward_to_remote(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Forward to the remote training server's /v1/chat/completions.
+
+        The remote server handles tokenization internally, so no local
+        tokenizer is needed. Returns standard OpenAI-compatible response.
+        """
+        import httpx
+
+        remote_url = getattr(self.config, "remote_url", "").rstrip("/")
+        if not remote_url:
+            raise HTTPException(
+                status_code=503,
+                detail="remote_url is not configured for remote backend.",
+            )
+
+        send_body = {
+            k: v for k, v in body.items()
+            if k not in {"logprobs", "top_logprobs", "stream_options"}
+        }
+        send_body["stream"] = False
+
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        remote_api_key = getattr(self.config, "remote_api_key", "")
+        if remote_api_key:
+            headers["Authorization"] = f"Bearer {remote_api_key}"
+
+        try:
+            timeout = getattr(self.config, "remote_timeout_s", 600.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    f"{remote_url}/v1/chat/completions",
+                    json=send_body,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+
+            # Parse tool calls / reasoning from content if needed
+            for choice in result.get("choices", []):
+                msg = choice.get("message")
+                if not msg or msg.get("role") != "assistant":
+                    continue
+                content = msg.get("content") or ""
+                has_tool_calls = bool(msg.get("tool_calls"))
+                has_reasoning = bool(msg.get("reasoning_content"))
+                if not content or (has_tool_calls and has_reasoning):
+                    continue
+                cleaned, parsed_tools, parsed_reasoning = _extract_tool_calls_from_text(content)
+                if parsed_tools or parsed_reasoning:
+                    msg["content"] = cleaned
+                    if parsed_reasoning and not has_reasoning:
+                        msg["reasoning_content"] = parsed_reasoning
+                    if parsed_tools and not has_tool_calls:
+                        msg["tool_calls"] = parsed_tools
+                        choice["finish_reason"] = "tool_calls"
+
+            return result
+        except httpx.HTTPStatusError as e:
+            logger.error("[OpenClaw] remote server error: %s %s", e.response.status_code, e.response.text[:200])
+            raise HTTPException(status_code=502, detail=f"Remote server error: {e}") from e
+        except Exception as e:
+            logger.error("[OpenClaw] remote forward failed: %s", e, exc_info=True)
+            raise HTTPException(status_code=502, detail=f"Remote forward error: {e}") from e
 
     # ------------------------------------------------------------------ #
     # Skill evolution (skills_only mode)                                  #

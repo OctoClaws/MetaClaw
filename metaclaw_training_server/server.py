@@ -345,6 +345,97 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
             status_code=503, detail="No inference engine available"
         )
 
+    # ------------------------------------------------------------------ #
+    # OpenAI-compatible chat completions (text in → text out)             #
+    # ------------------------------------------------------------------ #
+
+    @app.post("/v1/chat/completions")
+    async def chat_completions(request: Request):
+        """OpenAI-compatible chat completions endpoint.
+
+        Handles tokenization internally so the client doesn't need
+        a local tokenizer. Used by MetaClaw's remote backend.
+        """
+        session = app.state.session
+        if session is None:
+            raise HTTPException(status_code=503, detail="No active training session")
+        if session.tokenizer is None:
+            raise HTTPException(status_code=503, detail="No tokenizer available")
+
+        body = await request.json()
+        messages = body.get("messages", [])
+        temperature = float(body.get("temperature", 0.7))
+        max_tokens = int(body.get("max_tokens") or 2048)
+        top_k = int(body.get("top_k", 50))
+        top_p = float(body.get("top_p", 0.95))
+        stop = body.get("stop")
+        model_name = body.get("model", "metaclaw")
+
+        # Apply chat template → token ids
+        try:
+            prompt_text = session.tokenizer.apply_chat_template(
+                messages,
+                tools=body.get("tools"),
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            prompt_ids = session.tokenizer.encode(prompt_text, add_special_tokens=False)
+        except Exception as e:
+            logger.error("[Server] chat template failed: %s", e)
+            raise HTTPException(status_code=400, detail=f"Chat template error: {e}")
+
+        # Encode stop strings to token ids
+        stop_ids = None
+        if stop:
+            stop_ids = []
+            for s in (stop if isinstance(stop, list) else [stop]):
+                ids = session.tokenizer.encode(s, add_special_tokens=False)
+                if ids:
+                    stop_ids.extend(ids)
+
+        # Generate
+        result = await _run_in_thread(
+            session.generate,
+            prompt_ids,
+            max_tokens,
+            temperature,
+            top_k,
+            top_p,
+            stop_ids,
+        )
+
+        # Decode response tokens → text
+        response_text = session.tokenizer.decode(
+            result["tokens"], skip_special_tokens=True
+        )
+
+        # Build logprobs in OpenAI format
+        lp_content = [
+            {"token": "", "logprob": float(lp), "top_logprobs": []}
+            for lp in result.get("logprobs", [])
+        ]
+
+        return {
+            "id": f"chatcmpl-remote-{int(time.time())}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model_name,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": response_text,
+                },
+                "finish_reason": result.get("stop_reason", "stop"),
+                "logprobs": {"content": lp_content} if lp_content else None,
+            }],
+            "usage": {
+                "prompt_tokens": len(prompt_ids),
+                "completion_tokens": len(result["tokens"]),
+                "total_tokens": len(prompt_ids) + len(result["tokens"]),
+            },
+        }
+
     return app
 
 
