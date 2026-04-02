@@ -98,9 +98,10 @@ class TrainingSession:
                 for param in self.model.get_input_embeddings().parameters():
                     param.requires_grad = True
 
-        # Optimizer (AdamW, lr set per optim_step call)
+        # Optimizer — only trainable (LoRA) parameters to save memory
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
+            trainable_params,
             lr=1e-4,  # placeholder, updated in optim_step
             betas=(0.9, 0.999),
             weight_decay=0.01,
@@ -170,8 +171,8 @@ class TrainingSession:
             1, datum.target_tokens.unsqueeze(1)
         ).squeeze(1)  # (T,)
 
-        # Old log probs from datum
-        old_log_probs = datum.logprobs  # (T,)
+        # Old log probs from datum (detach to ensure no gradient flows through)
+        old_log_probs = datum.logprobs.detach()  # (T,)
 
         # Advantages (0 for prompt positions, nonzero for response)
         advantages = datum.advantages  # (T,)
@@ -358,19 +359,15 @@ class TrainingSession:
 
         for _ in range(max_tokens):
             outputs = self.model(input_ids=current_ids)
-            next_logits = outputs.logits[0, -1, :]  # (vocab,)
+            raw_logits = outputs.logits[0, -1, :]  # (vocab,)
 
-            # Apply temperature
-            if temperature > 0:
-                next_logits = next_logits / temperature
-            else:
-                # Greedy
-                pass
-
-            # Log probabilities
-            log_probs = torch.log_softmax(next_logits, dim=-1)
+            # Log probabilities from raw logits (before sampling transforms)
+            log_probs = torch.log_softmax(raw_logits, dim=-1)
 
             if temperature > 0:
+                # Apply temperature
+                next_logits = raw_logits / temperature
+
                 # Top-k filtering
                 if top_k > 0:
                     top_k_vals, top_k_idx = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
@@ -386,12 +383,16 @@ class TrainingSession:
                     remove_mask[1:] = remove_mask[:-1].clone()
                     remove_mask[0] = False
                     sorted_logits[remove_mask] = float("-inf")
-                    next_logits = sorted_logits.scatter(0, sorted_idx, sorted_logits)
+                    # Scatter back to original order
+                    next_logits = torch.zeros_like(sorted_logits).scatter_(
+                        0, sorted_idx, sorted_logits
+                    )
 
                 probs = torch.softmax(next_logits, dim=-1)
                 next_token = torch.multinomial(probs, 1).item()
             else:
-                next_token = next_logits.argmax().item()
+                # Greedy
+                next_token = raw_logits.argmax().item()
 
             token_logprob = log_probs[next_token].item()
 
