@@ -89,6 +89,8 @@ class TrainingSession:
         self.model = get_peft_model(self.model, lora_config)
 
         if self.config.gradient_checkpointing:
+            # Disable KV cache — incompatible with gradient checkpointing
+            self.model.config.use_cache = False
             # Enable gradient checkpointing for memory efficiency
             self.model.gradient_checkpointing_enable()
             # Ensure input embeddings require gradients (needed for gradient checkpointing + LoRA)
@@ -175,7 +177,7 @@ class TrainingSession:
         old_log_probs = datum.logprobs.detach()  # (T,)
 
         # Advantages (0 for prompt positions, nonzero for response)
-        advantages = datum.advantages  # (T,)
+        advantages = datum.advantages.detach()  # (T,)
 
         # Response mask: positions where advantages are nonzero
         mask = (advantages != 0).float()
@@ -339,6 +341,10 @@ class TrainingSession:
             raise RuntimeError("Training session not initialized")
 
         self.model.eval()
+        # Re-enable KV cache for efficient autoregressive generation
+        # (gradient checkpointing disables it during training)
+        use_cache_was = getattr(self.model.config, "use_cache", True)
+        self.model.config.use_cache = True
 
         input_tensor = torch.tensor(
             [input_ids], dtype=torch.long, device=self._device
@@ -357,59 +363,63 @@ class TrainingSession:
 
         current_ids = input_tensor
 
-        for _ in range(max_tokens):
-            outputs = self.model(input_ids=current_ids)
-            raw_logits = outputs.logits[0, -1, :]  # (vocab,)
+        try:
+            for _ in range(max_tokens):
+                outputs = self.model(input_ids=current_ids)
+                raw_logits = outputs.logits[0, -1, :]  # (vocab,)
 
-            # Log probabilities from raw logits (before sampling transforms)
-            log_probs = torch.log_softmax(raw_logits, dim=-1)
+                # Log probabilities from raw logits (before sampling transforms)
+                log_probs = torch.log_softmax(raw_logits, dim=-1)
 
-            if temperature > 0:
-                # Apply temperature
-                next_logits = raw_logits / temperature
+                if temperature > 0:
+                    # Apply temperature
+                    next_logits = raw_logits / temperature
 
-                # Top-k filtering
-                if top_k > 0:
-                    top_k_vals, top_k_idx = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
-                    filter_mask = torch.full_like(next_logits, float("-inf"))
-                    filter_mask.scatter_(0, top_k_idx, top_k_vals)
-                    next_logits = filter_mask
+                    # Top-k filtering
+                    if top_k > 0:
+                        top_k_vals, top_k_idx = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
+                        filter_mask = torch.full_like(next_logits, float("-inf"))
+                        filter_mask.scatter_(0, top_k_idx, top_k_vals)
+                        next_logits = filter_mask
 
-                # Top-p (nucleus) filtering
-                if top_p < 1.0:
-                    sorted_logits, sorted_idx = torch.sort(next_logits, descending=True)
-                    cum_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-                    remove_mask = cum_probs > top_p
-                    remove_mask[1:] = remove_mask[:-1].clone()
-                    remove_mask[0] = False
-                    sorted_logits[remove_mask] = float("-inf")
-                    # Scatter back to original order
-                    next_logits = torch.zeros_like(sorted_logits).scatter_(
-                        0, sorted_idx, sorted_logits
-                    )
+                    # Top-p (nucleus) filtering
+                    if top_p < 1.0:
+                        sorted_logits, sorted_idx = torch.sort(next_logits, descending=True)
+                        cum_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+                        remove_mask = cum_probs > top_p
+                        remove_mask[1:] = remove_mask[:-1].clone()
+                        remove_mask[0] = False
+                        sorted_logits[remove_mask] = float("-inf")
+                        # Scatter back to original order
+                        next_logits = torch.zeros_like(sorted_logits).scatter_(
+                            0, sorted_idx, sorted_logits
+                        )
 
-                probs = torch.softmax(next_logits, dim=-1)
-                next_token = torch.multinomial(probs, 1).item()
+                    probs = torch.softmax(next_logits, dim=-1)
+                    next_token = torch.multinomial(probs, 1).item()
+                else:
+                    # Greedy
+                    next_token = raw_logits.argmax().item()
+
+                token_logprob = log_probs[next_token].item()
+
+                generated_tokens.append(next_token)
+                generated_logprobs.append(token_logprob)
+
+                if next_token in eos_ids:
+                    stop_reason = "stop"
+                    break
+
+                # Append to input for next iteration
+                current_ids = torch.cat(
+                    [current_ids, torch.tensor([[next_token]], device=self._device)],
+                    dim=1,
+                )
             else:
-                # Greedy
-                next_token = raw_logits.argmax().item()
-
-            token_logprob = log_probs[next_token].item()
-
-            generated_tokens.append(next_token)
-            generated_logprobs.append(token_logprob)
-
-            if next_token in eos_ids:
-                stop_reason = "stop"
-                break
-
-            # Append to input for next iteration
-            current_ids = torch.cat(
-                [current_ids, torch.tensor([[next_token]], device=self._device)],
-                dim=1,
-            )
-        else:
-            stop_reason = "length"
+                stop_reason = "length"
+        finally:
+            # Restore use_cache to its original value for training
+            self.model.config.use_cache = use_cache_was
 
         return {
             "tokens": generated_tokens,
