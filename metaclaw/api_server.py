@@ -579,6 +579,10 @@ class MetaClawAPIServer:
         self._server: Optional[uvicorn.Server] = None
         self._thread: Optional[threading.Thread] = None
 
+        # SDK backend module (tinker / mint / remote_backend).
+        # Set via set_sdk() or auto-detected from data_formatter.
+        self._sdk = None
+
         # External trainer reference + event loop for admin train-step endpoint.
         # Set via set_trainer() after the trainer is constructed.
         self._trainer = None
@@ -601,6 +605,10 @@ class MetaClawAPIServer:
     # ------------------------------------------------------------------ #
     # FastAPI app                                                          #
     # ------------------------------------------------------------------ #
+
+    def set_sdk(self, sdk_module) -> None:
+        """Register the SDK backend module for inference forwarding."""
+        self._sdk = sdk_module
 
     def set_trainer(self, trainer, main_loop) -> None:
         """Inject the trainer reference and its event loop for the admin
@@ -1480,11 +1488,14 @@ class MetaClawAPIServer:
     # ------------------------------------------------------------------ #
 
     async def _forward_to_tinker(self, body: dict[str, Any]) -> dict[str, Any]:
-        """Forward the request to Tinker via SamplingClient.sample_async."""
-        import tinker
+        """Forward the request to the training backend via SamplingClient.sample_async."""
+        if self._sdk is not None:
+            sdk = self._sdk
+        else:
+            import tinker as sdk
 
         if self._sampling_client is None:
-            raise HTTPException(status_code=503, detail="no Tinker sampling client available")
+            raise HTTPException(status_code=503, detail="no sampling client available")
         if self._tokenizer is None:
             raise HTTPException(status_code=503, detail="no tokenizer available")
 
@@ -1509,8 +1520,8 @@ class MetaClawAPIServer:
             prompt_ids = self._tokenizer.encode(prompt_text, add_special_tokens=False)
 
             # Build Tinker ModelInput
-            chunk = tinker.EncodedTextChunk(tokens=list(prompt_ids), type="encoded_text")
-            model_input = tinker.ModelInput(chunks=[chunk])
+            chunk = sdk.EncodedTextChunk(tokens=list(prompt_ids), type="encoded_text")
+            model_input = sdk.ModelInput(chunks=[chunk])
 
             # Build SamplingParams
             sp_kwargs: dict[str, Any] = dict(
@@ -1521,7 +1532,7 @@ class MetaClawAPIServer:
             )
             if stop is not None:
                 sp_kwargs["stop"] = stop
-            sampling_params = tinker.SamplingParams(**sp_kwargs)
+            sampling_params = sdk.SamplingParams(**sp_kwargs)
 
             # Call Tinker
             response = await self._sampling_client.sample_async(

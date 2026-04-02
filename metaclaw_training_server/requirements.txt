@@ -1,0 +1,12 @@
+# MetaClaw Training Server dependencies
+# Most should already be installed on the GPU server
+fastapi>=0.100.0
+uvicorn>=0.20.0
+pydantic>=2.0
+torch>=2.0
+transformers>=4.40
+peft>=0.10.0
+accelerate>=0.25.0
+safetensors
+# Optional: vLLM for fast inference (recommended)
+# vllm>=0.4.0

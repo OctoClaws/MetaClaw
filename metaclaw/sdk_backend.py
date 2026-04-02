@@ -18,8 +18,8 @@ from urllib.parse import urlparse
 if TYPE_CHECKING:
     from .config import MetaClawConfig
 
-_VALID_BACKENDS = {"auto", "tinker", "mint"}
-_BACKEND_LABELS = {"tinker": "Tinker", "mint": "MinT"}
+_VALID_BACKENDS = {"auto", "tinker", "mint", "remote"}
+_BACKEND_LABELS = {"tinker": "Tinker", "mint": "MinT", "remote": "Remote GPU"}
 
 
 @dataclass(frozen=True)
@@ -100,6 +100,13 @@ def _looks_like_mint_base_url(value: str) -> bool:
     return "mint" in urlparse(candidate).netloc.lower()
 
 
+def _has_remote_signal(config: "MetaClawConfig") -> bool:
+    """Detect remote backend from config fields or env vars."""
+    if _first_non_empty(getattr(config, "remote_url", "")):
+        return True
+    return bool(_first_env("REMOTE_TRAINING_URL"))
+
+
 def _has_mint_signal(config: "MetaClawConfig") -> bool:
     if _first_env("MINT_API_KEY", "MINT_BASE_URL"):
         return True
@@ -120,8 +127,10 @@ def _has_mint_signal(config: "MetaClawConfig") -> bool:
 
 def infer_backend_key(config: "MetaClawConfig") -> str:
     configured = configured_backend_name(config)
-    if configured in {"tinker", "mint"}:
+    if configured in {"tinker", "mint", "remote"}:
         return configured
+    if _has_remote_signal(config):
+        return "remote"
     if _has_mint_signal(config) and _module_available("mint"):
         return "mint"
     return "tinker"
@@ -144,6 +153,8 @@ def resolve_base_url(config: "MetaClawConfig", backend_key: str | None = None) -
 
 
 def _import_backend_module(backend_key: str, configured_backend: str):
+    if backend_key == "remote":
+        return importlib.import_module("metaclaw.remote_backend")
     if backend_key == "mint" and configured_backend == "mint" and not _module_available("mint"):
         raise RuntimeError(
             "rl.backend=mint requires the MinT compatibility package. "
@@ -156,11 +167,26 @@ def resolve_sdk_backend(config: "MetaClawConfig") -> SDKBackend:
     configured = configured_backend_name(config)
     key = infer_backend_key(config)
     module = _import_backend_module(key, configured)
+
+    if key == "remote":
+        # Remote backend uses its own URL/key fields
+        api_key = _first_non_empty(
+            getattr(config, "remote_api_key", ""),
+            _first_env("REMOTE_TRAINING_API_KEY"),
+        )
+        base_url = _first_non_empty(
+            getattr(config, "remote_url", ""),
+            _first_env("REMOTE_TRAINING_URL"),
+        )
+    else:
+        api_key = resolve_api_key(config, key)
+        base_url = resolve_base_url(config, key)
+
     return SDKBackend(
         key=key,
         label=_BACKEND_LABELS[key],
         import_name=key,
         module=module,
-        api_key=resolve_api_key(config, key),
-        base_url=resolve_base_url(config, key),
+        api_key=api_key,
+        base_url=base_url,
     )

@@ -25,6 +25,27 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+# ------------------------------------------------------------------ #
+# Pluggable SDK backend (tinker / mint / remote_backend)              #
+# ------------------------------------------------------------------ #
+
+_sdk_module = None
+
+
+def set_sdk(module):
+    """Register the active SDK module (called by trainer.setup())."""
+    global _sdk_module
+    _sdk_module = module
+
+
+def _get_sdk():
+    """Return the active SDK module, falling back to tinker."""
+    global _sdk_module
+    if _sdk_module is not None:
+        return _sdk_module
+    import tinker
+    return tinker
+
 
 # ------------------------------------------------------------------ #
 # ConversationSample dataclass                                         #
@@ -70,14 +91,8 @@ def sample_to_datum(
     -------
     tinker.Datum
     """
-    try:
-        import tinker
-        from tinker import TensorData
-    except ImportError as e:
-        raise ImportError(
-            "tinker SDK is required for data formatting. "
-            "Install via: pip install tinker  (or the appropriate private package)"
-        ) from e
+    sdk = _get_sdk()
+    TensorData = sdk.TensorData
 
     prompt_len = len(sample.prompt_tokens)
     all_tokens = sample.prompt_tokens + sample.response_tokens
@@ -161,14 +176,14 @@ def sample_to_datum(
         )
 
     # Build model input from all tokens except the last
-    model_input = tinker.ModelInput.from_ints(all_tokens[:-1])
+    model_input = sdk.ModelInput.from_ints(all_tokens[:-1])
 
     # Note: "mask" is NOT included in loss_fn_inputs.  The Tinker server
     # rejects unknown keys (only target_tokens, logprobs, advantages, weights,
     # clip_*_threshold are accepted).  The mask information is already encoded
     # in the advantages (0.0 for prompt / masked positions).  The cookbook
     # likewise strips mask via remove_mask() before calling forward_backward.
-    return tinker.Datum(
+    return sdk.Datum(
         model_input=model_input,
         loss_fn_inputs={
             "target_tokens": TensorData.from_torch(
