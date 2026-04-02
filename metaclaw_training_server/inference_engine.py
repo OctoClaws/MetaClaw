@@ -33,8 +33,12 @@ class InferenceEngine:
         self._base_model: str = ""
         self._tokenizer = None
 
-    async def initialize(self, base_model: str):
-        """Initialize vLLM with base model and LoRA support."""
+    def initialize_sync(self, base_model: str):
+        """Initialize vLLM with base model and LoRA support.
+
+        This is a synchronous method (vLLM init is blocking).
+        Call from a thread pool to avoid blocking the event loop.
+        """
         self._base_model = base_model
 
         # Set CUDA_VISIBLE_DEVICES for inference

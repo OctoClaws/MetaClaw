@@ -146,10 +146,10 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
     # ------------------------------------------------------------------ #
 
     async def _run_in_thread(fn, *args, **kwargs):
+        import functools
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            app.state.executor, lambda: fn(*args, **kwargs)
-        )
+        func = functools.partial(fn, *args, **kwargs)
+        return await loop.run_in_executor(app.state.executor, func)
 
     # ------------------------------------------------------------------ #
     # Endpoints                                                            #
@@ -195,24 +195,17 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
 
         app.state.session = session
 
-        # Initialize inference engine (non-blocking, best-effort)
+        # Initialize inference engine (best-effort, run in thread to avoid blocking)
         if cfg.inference_backend == "vllm":
             inference = InferenceEngine(cfg)
-            # Set CUDA_VISIBLE_DEVICES for vLLM subprocess
-            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(
-                str(d) for d in cfg.inference_devices
-            )
             try:
-                await inference.initialize(req.base_model)
+                await _run_in_thread(inference.initialize_sync, req.base_model)
                 app.state.inference = inference
             except Exception as e:
                 logger.warning(
                     "[Server] vLLM init failed, using HF fallback: %s", e
                 )
                 app.state.inference = None
-            finally:
-                # Restore CUDA_VISIBLE_DEVICES
-                os.environ.pop("CUDA_VISIBLE_DEVICES", None)
 
         trainable, total = session.model.get_nb_trainable_parameters()
         return LoRACreateResponse(
