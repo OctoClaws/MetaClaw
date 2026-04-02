@@ -365,7 +365,10 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
         body = await request.json()
         messages = body.get("messages", [])
         temperature = float(body.get("temperature", 0.7))
-        max_tokens = int(body.get("max_tokens") or 2048)
+        max_tokens = int(body.get("max_tokens") or 4096)
+        # Ensure enough room for thinking + response (Qwen3 uses <think> blocks)
+        if max_tokens < 1024:
+            max_tokens = 1024
         top_k = int(body.get("top_k", 50))
         top_p = float(body.get("top_p", 0.95))
         stop = body.get("stop")
@@ -409,11 +412,28 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
             result["tokens"], skip_special_tokens=True
         )
 
+        # Separate <think>...</think> reasoning from content
+        reasoning_content = ""
+        content = response_text
+        import re
+        think_match = re.search(r"<think>(.*?)</think>(.*)", response_text, re.DOTALL)
+        if think_match:
+            reasoning_content = think_match.group(1).strip()
+            content = think_match.group(2).strip()
+        elif response_text.startswith("<think>"):
+            # Incomplete think block (model hit max_tokens mid-thinking)
+            reasoning_content = response_text.replace("<think>", "").strip()
+            content = ""
+
         # Build logprobs in OpenAI format
         lp_content = [
             {"token": "", "logprob": float(lp), "top_logprobs": []}
             for lp in result.get("logprobs", [])
         ]
+
+        assistant_message = {"role": "assistant", "content": content}
+        if reasoning_content:
+            assistant_message["reasoning_content"] = reasoning_content
 
         return {
             "id": f"chatcmpl-remote-{int(time.time())}",
@@ -422,10 +442,7 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
             "model": model_name,
             "choices": [{
                 "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": response_text,
-                },
+                "message": assistant_message,
                 "finish_reason": result.get("stop_reason", "stop"),
                 "logprobs": {"content": lp_content} if lp_content else None,
             }],
