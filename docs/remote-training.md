@@ -317,7 +317,7 @@ If your GPU server is on a public network, use an SSH tunnel instead of exposing
 
 ```bash
 # On your local machine
-ssh -L 8000:localhost:8000 -p 65000 user@gpu-server -N
+ssh -L 8000:localhost:8000 user@gpu-server -N
 
 # Then configure MetaClaw to use localhost
 rl:

@@ -173,7 +173,7 @@ tinker.AdamParams(learning_rate: float)
 ```python
 # 新增字段
 backend: str = "auto"              # "auto" | "tinker" | "mint" | "remote"
-remote_url: str = ""               # e.g. "http://115.190.60.96:8000"
+remote_url: str = ""               # e.g. "http://your-gpu-server:8000"
 remote_api_key: str = ""           # Bearer token 认证
 remote_timeout_s: float = 600.0    # 单次请求超时
 ```
@@ -546,7 +546,7 @@ mode: rl                          # 切换到 rl 模式
 rl:
   enabled: true
   backend: remote                 # ← 关键：选择 remote 后端
-  remote_url: http://115.190.60.96:8000
+  remote_url: http://your-gpu-server:8000
   remote_api_key: your-secret-key
   remote_timeout_s: 600
   model: Qwen/Qwen3-4B
@@ -554,7 +554,7 @@ rl:
   batch_size: 4
   prm_model: gpt-5.4
   prm_api_key: sk-xxx
-  prm_url: https://vibe.deepminer.ai/v1
+  prm_url: https://api.openai.com/v1
 ```
 
 切回 Tinker 只需：
@@ -584,7 +584,7 @@ rl:
 ## 7. 安全
 
 1. **Bearer Token 认证**：所有 API 调用携带 `Authorization: Bearer <token>`
-2. **SSH 隧道（可选）**：`ssh -L 8000:localhost:8000 -p 65000 root@115.190.60.96`，本地走 localhost
+2. **SSH 隧道（可选）**：`ssh -L 8000:localhost:8000 user@your-gpu-server`，本地走 localhost
 3. **HTTPS（可选）**：用 Let's Encrypt 或自签证书
 4. **最小化暴露**：训练服务只监听需要的端口
 
