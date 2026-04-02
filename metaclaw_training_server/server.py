@@ -120,6 +120,51 @@ class HealthResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
+def _truncate_messages(
+    messages: list[dict], max_tokens: int, tokenizer
+) -> list[dict]:
+    """Truncate messages to fit within max_tokens.
+
+    Strategy: keep system prompt short, keep last N user/assistant turns.
+    System prompt is truncated first (it's usually the longest).
+    """
+    if not messages or tokenizer is None:
+        return messages
+
+    # Estimate total tokens
+    total_text = "".join(m.get("content", "") or "" for m in messages)
+    estimated_tokens = len(tokenizer.encode(total_text, add_special_tokens=False))
+
+    if estimated_tokens <= max_tokens:
+        return messages
+
+    logger.warning(
+        "[Server] Prompt too long (%d tokens > %d max), truncating",
+        estimated_tokens, max_tokens,
+    )
+
+    result = []
+    # Truncate system prompt to ~1000 chars max
+    for msg in messages:
+        if msg.get("role") == "system":
+            content = msg.get("content", "") or ""
+            if len(content) > 1000:
+                # Keep first 500 + last 500 chars
+                content = content[:500] + "\n...(truncated)...\n" + content[-500:]
+            result.append({"role": "system", "content": content})
+        else:
+            result.append(msg)
+
+    # If still too long, keep only last few turns
+    if len(result) > 5:
+        # Keep system + last 4 messages
+        system_msgs = [m for m in result if m.get("role") == "system"]
+        other_msgs = [m for m in result if m.get("role") != "system"]
+        result = system_msgs + other_msgs[-4:]
+
+    return result
+
+
 def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
     """Create the FastAPI application."""
     if config is None:
@@ -374,10 +419,21 @@ def create_app(config: Optional[ServerConfig] = None) -> FastAPI:
         stop = body.get("stop")
         model_name = body.get("model", "metaclaw")
 
+        # Truncate overly long messages to fit model's effective context
+        # Small models (< 8B) degrade significantly with very long prompts
+        server_cfg = app.state.config
+        max_prompt_tokens = min(
+            getattr(session, '_max_prompt_tokens', 4096),
+            server_cfg.vllm_max_model_len - max_tokens - 512  # leave room for response
+        )
+
+        # Truncate system prompt if total is too long
+        truncated_messages = _truncate_messages(messages, max_prompt_tokens, session.tokenizer)
+
         # Apply chat template → token ids
         try:
             prompt_text = session.tokenizer.apply_chat_template(
-                messages,
+                truncated_messages,
                 tools=body.get("tools"),
                 tokenize=False,
                 add_generation_prompt=True,
